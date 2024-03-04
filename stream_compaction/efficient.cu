@@ -64,7 +64,7 @@ namespace StreamCompaction {
             }
             __syncthreads();
 #pragma unroll
-            for (int stride = 1, active = blockDim.x >> 1; stride < blockDim.x; stride <<= 1, active >>= 1) {
+            for (int stride = 1, active = blockDim.x >> 1; stride < blockDim.x / 2; stride <<= 1, active >>= 1) {
                 if (idx <= active) {
                     int idxPa = offsetAddr(idx * stride * 2 - 1);
                     int idxCh = offsetAddr(idx * stride * 2 - 1 - stride);
@@ -74,11 +74,12 @@ namespace StreamCompaction {
             }
 
             if (idx == 1) {
-                shared[offsetAddr(blockDim.x - 1)] = 0;
+                shared[offsetAddr(blockDim.x - 1)] = shared[offsetAddr(blockDim.x / 2 - 1)];
+                shared[offsetAddr(blockDim.x / 2 - 1)] = 0;
             }
             __syncthreads();
 #pragma unroll
-            for (int stride = blockDim.x >> 1, active = 1; stride >= 1; stride >>= 1, active <<= 1) {
+            for (int stride = blockDim.x >> 2, active = 2; stride >= 1; stride >>= 1, active <<= 1) {
                 if (idx <= active) {
                     int idxPa = offsetAddr(idx * stride * 2 - 1);
                     int idxCh = offsetAddr(idx * stride * 2 - 1 - stride);
@@ -208,6 +209,28 @@ namespace StreamCompaction {
                 devScannedBlockAdd(devBuf[i - 1], devBuf[i], devBuf.sizeAt(i - 1), blockSize);
             }
             timer().endGpuTimer();
+
+            cudaMemcpy(out, devBuf.data(), n * sizeof(int), cudaMemcpyKind::cudaMemcpyDeviceToHost);
+            devBuf.destroy();
+        }
+
+        void scanBlockTest(int* out, const int* in, int n, int blockSize) {
+            // Just to keep the edge case correct
+            // If n <= blockSize, there's no need to perform a GPU scan
+            if (n <= blockSize) {
+                out[0] = 0;
+                for (int i = 1; i < n; i++) {
+                    out[i] = out[i - 1] + in[i - 1];
+                }
+                return;
+            }
+
+            DevSharedScanAuxBuffer<int> devBuf(n, SharedScanBlockSize);
+            cudaMemcpy(devBuf.data(), in, n * sizeof(int), cudaMemcpyKind::cudaMemcpyHostToDevice);
+
+            timer().startGpuTimer();
+
+            devBlockScanInPlaceShared(devBuf[0], devBuf[1], devBuf.sizeAt(0), blockSize);
 
             cudaMemcpy(out, devBuf.data(), n * sizeof(int), cudaMemcpyKind::cudaMemcpyDeviceToHost);
             devBuf.destroy();

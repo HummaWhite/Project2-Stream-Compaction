@@ -106,6 +106,7 @@ int main(int argc, char* argv[]) {
     //printArray(NPOT, c, true);
     printCmpResult(NPOT, b, c);
 
+    /*
     printf("\n");
     printf("*****************************\n");
     printf("** STREAM COMPACTION TESTS **\n");
@@ -192,6 +193,7 @@ int main(int argc, char* argv[]) {
     StreamCompaction::RadixSort::sortShared(c, a, NPOT);
     printElapsedTime(StreamCompaction::RadixSort::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
     printCmpResult(NPOT, c, b);
+    */
 
     delete[] a;
     delete[] b;
