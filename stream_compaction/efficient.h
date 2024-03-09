@@ -15,6 +15,14 @@ namespace StreamCompaction {
 
         void scan(int n, int *odata, const int *idata);
         void scanShared(int* out, const int* in, int n, int blockSize);
+        void scanShared2(int* out, const int* in, int n, int blockSize);
+        void scanShared4(int* out, const int* in, int n, int blockSize);
+        void scanBlockTest(int* out, const int* in, int n, int blockSize);
+        void scanBlockTest2(int* out, const int* in, int n, int blockSize);
+        void scanBlockTest4(int* out, const int* in, int n, int blockSize);
+        void scanWarpTest(int* out, const int* in, int n, int blockSize);
+        void scanWarpTest2(int* out, const int* in, int n, int blockSize);
+        void scanWarpTest4(int* out, const int* in, int n, int blockSize);
 
         int compact(int* out, const int* in, int n);
         int compactShared(int* out, const int* in, int n);

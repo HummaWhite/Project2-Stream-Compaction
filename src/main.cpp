@@ -22,11 +22,14 @@ int *a = new int[SIZE];
 int *b = new int[SIZE];
 int *c = new int[SIZE];
 
+#define PRINT_ARRAY 0
+
 int main(int argc, char* argv[]) {
     StreamCompaction::Common::initCudaProperties();
 
     // Scan tests
 
+    /*
     printf("\n");
     printf("****************\n");
     printf("** SCAN TESTS **\n");
@@ -58,47 +61,58 @@ int main(int argc, char* argv[]) {
     printElapsedTime(StreamCompaction::Naive::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
     printArray(SIZE, c, true);
     printCmpResult(SIZE, b, c);
+    */
 
-    /* For bug-finding only: Array of 1s to help find bugs in stream compaction or scan
-    onesArray(SIZE, c);
-    printDesc("1s array for finding bugs");
-    StreamCompaction::Naive::scan(SIZE, c, a);
-    printArray(SIZE, c, true); */
-
+    /*
     zeroArray(SIZE, c);
     printDesc("naive scan, non-power-of-two");
     StreamCompaction::Naive::scan(NPOT, c, a);
     printElapsedTime(StreamCompaction::Naive::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
     printArray(SIZE, c, true);
     printCmpResult(NPOT, b, c);
+    */
 
+    /*
     zeroArray(SIZE, c);
     printDesc("work-efficient scan, power-of-two");
     StreamCompaction::Efficient::scan(SIZE, c, a);
     printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
     //printArray(SIZE, c, true);
     printCmpResult(SIZE, b, c);
-
+    
     zeroArray(SIZE, c);
     printDesc("work-efficient scan, non-power-of-two");
     StreamCompaction::Efficient::scan(NPOT, c, a);
     printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
     //printArray(NPOT, c, true);
     printCmpResult(NPOT, b, c);
+    */
 
     zeroArray(SIZE, c);
-    printDesc("work-efficient scan with shared memory, NPOT");
+    printDesc("work-efficient scan with shared memory - 128, NPOT");
     StreamCompaction::Efficient::scanShared(c, a, NPOT, 128);
     printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
     printCmpResult(NPOT, b, c);
 
+    zeroArray(SIZE, c);
+    printDesc("work-efficient scan with shared memory - 128x2, NPOT");
+    StreamCompaction::Efficient::scanShared2(c, a, NPOT, 128);
+    printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
+    printCmpResult(NPOT, b, c);
+
+    zeroArray(SIZE, c);
+    printDesc("work-efficient scan with shared memory - 128x4, NPOT");
+    StreamCompaction::Efficient::scanShared4(c, a, NPOT, 128);
+    printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
+    printCmpResult(NPOT, b, c);
+    /*
     zeroArray(SIZE, c);
     printDesc("thrust scan, power-of-two");
     StreamCompaction::Thrust::scan(SIZE, c, a);
     printElapsedTime(StreamCompaction::Thrust::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
     //printArray(SIZE, c, true);
     printCmpResult(SIZE, b, c);
-
+    */
     zeroArray(SIZE, c);
     printDesc("thrust scan, non-power-of-two");
     StreamCompaction::Thrust::scan(NPOT, c, a);
@@ -106,6 +120,278 @@ int main(int argc, char* argv[]) {
     //printArray(NPOT, c, true);
     printCmpResult(NPOT, b, c);
 
+    printf("\n");
+    printf("****************\n");
+    printf("** BLOCK SCAN 1X **\n");
+    printf("****************\n");
+
+    std::fill(a, a + SIZE, 1);
+    
+    zeroArray(SIZE, c);
+    printDesc("block scan 32x1");
+    StreamCompaction::Efficient::scanBlockTest(c, a, NPOT, 32);
+    printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
+#if PRINT_ARRAY
+    printArray(1024, c);
+#endif
+
+    zeroArray(SIZE, c);
+    printDesc("block scan 64x1");
+    StreamCompaction::Efficient::scanBlockTest(c, a, NPOT, 64);
+    printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
+#if PRINT_ARRAY
+    printArray(1024, c);
+#endif
+    
+    zeroArray(SIZE, c);
+    printDesc("block scan 128x1");
+    StreamCompaction::Efficient::scanBlockTest(c, a, NPOT, 128);
+    printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
+#if PRINT_ARRAY
+    printArray(1024, c);
+#endif
+    
+    zeroArray(SIZE, c);
+    printDesc("block scan 256x1");
+    StreamCompaction::Efficient::scanBlockTest(c, a, NPOT, 256);
+    printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
+#if PRINT_ARRAY
+    printArray(1024, c);
+#endif
+
+    printf("\n");
+    printf("****************\n");
+    printf("** BLOCK SCAN 2X **\n");
+    printf("****************\n");
+
+    zeroArray(SIZE, c);
+    printDesc("block scan 32x2");
+    StreamCompaction::Efficient::scanBlockTest2(c, a, NPOT, 32);
+    printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
+#if PRINT_ARRAY
+    printArray(1024, c);
+#endif
+
+    zeroArray(SIZE, c);
+    printDesc("block scan 64x2");
+    StreamCompaction::Efficient::scanBlockTest2(c, a, NPOT, 64);
+    printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
+#if PRINT_ARRAY
+    printArray(1024, c);
+#endif
+
+    zeroArray(SIZE, c);
+    printDesc("block scan 128x2");
+    StreamCompaction::Efficient::scanBlockTest2(c, a, NPOT, 128);
+    printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
+#if PRINT_ARRAY
+    printArray(1024, c);
+#endif
+
+    zeroArray(SIZE, c);
+    printDesc("block scan 256x2");
+    StreamCompaction::Efficient::scanBlockTest2(c, a, NPOT, 256);
+    printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
+#if PRINT_ARRAY
+    printArray(1024, c);
+#endif
+
+    printf("\n");
+    printf("****************\n");
+    printf("** BLOCK SCAN 4X **\n");
+    printf("****************\n");
+
+    zeroArray(SIZE, c);
+    printDesc("block scan 32x4");
+    StreamCompaction::Efficient::scanBlockTest4(c, a, NPOT, 32);
+    printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
+#if PRINT_ARRAY
+    printArray(1024, c);
+#endif
+
+    zeroArray(SIZE, c);
+    printDesc("block scan 64x4");
+    StreamCompaction::Efficient::scanBlockTest4(c, a, NPOT, 64);
+    printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
+#if PRINT_ARRAY
+    printArray(1024, c);
+#endif
+
+    zeroArray(SIZE, c);
+    printDesc("block scan 128x4");
+    StreamCompaction::Efficient::scanBlockTest4(c, a, NPOT, 128);
+    printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
+#if PRINT_ARRAY
+    printArray(1024, c);
+#endif
+
+    zeroArray(SIZE, c);
+    printDesc("block scan 256x4");
+    StreamCompaction::Efficient::scanBlockTest4(c, a, NPOT, 256);
+    printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
+#if PRINT_ARRAY
+    printArray(1024, c);
+#endif
+
+    printf("\n");
+    printf("****************\n");
+    printf("** WARP SCAN 1X **\n");
+    printf("****************\n");
+
+    zeroArray(SIZE, c);
+    printDesc("warp scan 32x1");
+    StreamCompaction::Efficient::scanWarpTest(c, a, NPOT, 32);
+    printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
+#if PRINT_ARRAY
+    printArray(1024, c);
+#endif
+
+    zeroArray(SIZE, c);
+    printDesc("warp scan 64x1");
+    StreamCompaction::Efficient::scanWarpTest(c, a, NPOT, 64);
+    printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
+#if PRINT_ARRAY
+    printArray(1024, c);
+#endif
+
+    zeroArray(SIZE, c);
+    printDesc("warp scan 128x1");
+    StreamCompaction::Efficient::scanWarpTest(c, a, NPOT, 128);
+    printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
+#if PRINT_ARRAY
+    printArray(1024, c);
+#endif
+
+    zeroArray(SIZE, c);
+    printDesc("warp scan 256x1");
+    StreamCompaction::Efficient::scanWarpTest(c, a, NPOT, 256);
+    printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
+#if PRINT_ARRAY
+    printArray(1024, c);
+#endif
+
+    zeroArray(SIZE, c);
+    printDesc("warp scan 512x1");
+    StreamCompaction::Efficient::scanWarpTest(c, a, NPOT, 512);
+    printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
+#if PRINT_ARRAY
+    printArray(1024, c);
+#endif
+
+    zeroArray(SIZE, c);
+    printDesc("warp scan 1024x1");
+    StreamCompaction::Efficient::scanWarpTest(c, a, NPOT, 1024);
+    printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
+#if PRINT_ARRAY
+    printArray(1024, c);
+#endif
+
+    printf("\n");
+    printf("****************\n");
+    printf("** WARP SCAN 2X **\n");
+    printf("****************\n");
+
+    zeroArray(SIZE, c);
+    printDesc("warp scan 32x2");
+    StreamCompaction::Efficient::scanWarpTest2(c, a, NPOT, 32);
+    printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
+#if PRINT_ARRAY
+    printArray(1024, c);
+#endif
+
+    zeroArray(SIZE, c);
+    printDesc("warp scan 64x2");
+    StreamCompaction::Efficient::scanWarpTest2(c, a, NPOT, 64);
+    printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
+#if PRINT_ARRAY
+    printArray(1024, c);
+#endif
+
+    zeroArray(SIZE, c);
+    printDesc("warp scan 128x2");
+    StreamCompaction::Efficient::scanWarpTest2(c, a, NPOT, 128);
+    printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
+#if PRINT_ARRAY
+    printArray(1024, c);
+#endif
+
+    zeroArray(SIZE, c);
+    printDesc("warp scan 256x2");
+    StreamCompaction::Efficient::scanWarpTest2(c, a, NPOT, 256);
+    printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
+#if PRINT_ARRAY
+    printArray(1024, c);
+#endif
+
+    zeroArray(SIZE, c);
+    printDesc("warp scan 512x2");
+    StreamCompaction::Efficient::scanWarpTest2(c, a, NPOT, 512);
+    printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
+#if PRINT_ARRAY
+    printArray(1024, c);
+#endif
+
+    zeroArray(SIZE, c);
+    printDesc("warp scan 1024x2");
+    StreamCompaction::Efficient::scanWarpTest2(c, a, NPOT, 1024);
+    printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
+#if PRINT_ARRAY
+    printArray(1024, c);
+#endif
+
+    printf("\n");
+    printf("****************\n");
+    printf("** WARP SCAN 4X **\n");
+    printf("****************\n");
+
+    zeroArray(SIZE, c);
+    printDesc("warp scan 32x4");
+    StreamCompaction::Efficient::scanWarpTest4(c, a, NPOT, 32);
+    printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
+#if PRINT_ARRAY
+    printArray(1024, c);
+#endif
+
+    zeroArray(SIZE, c);
+    printDesc("warp scan 64x4");
+    StreamCompaction::Efficient::scanWarpTest4(c, a, NPOT, 64);
+    printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
+#if PRINT_ARRAY
+    printArray(1024, c);
+#endif
+
+    zeroArray(SIZE, c);
+    printDesc("warp scan 128x4");
+    StreamCompaction::Efficient::scanWarpTest4(c, a, NPOT, 128);
+    printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
+#if PRINT_ARRAY
+    printArray(1024, c);
+#endif
+
+    zeroArray(SIZE, c);
+    printDesc("warp scan 256x4");
+    StreamCompaction::Efficient::scanWarpTest4(c, a, NPOT, 256);
+    printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
+#if PRINT_ARRAY
+    printArray(1024, c);
+#endif
+
+    zeroArray(SIZE, c);
+    printDesc("warp scan 512x4");
+    StreamCompaction::Efficient::scanWarpTest4(c, a, NPOT, 512);
+    printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
+#if PRINT_ARRAY
+    printArray(1024, c);
+#endif
+
+    zeroArray(SIZE, c);
+    printDesc("warp scan 1024x4");
+    StreamCompaction::Efficient::scanWarpTest4(c, a, NPOT, 1024);
+    printElapsedTime(StreamCompaction::Efficient::timer().getGpuElapsedTimeForPreviousOperation(), "(CUDA Measured)");
+#if PRINT_ARRAY
+    printArray(1024, c);
+#endif
+    
     /*
     printf("\n");
     printf("*****************************\n");

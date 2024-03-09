@@ -1,13 +1,17 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
+#include <cuda_device_runtime_api.h>
 #include "common.h"
 #include "efficient.h"
 
 #define SCAN_EFFI_REDUCE_BANK_CONFLICT 1
+#define SCAN_UP_ONLY 1
 
 namespace StreamCompaction {
     namespace Efficient {
         enum class ScanSource { Host, Device };
+
+        #define WarpSize 32
 
         using StreamCompaction::Common::PerformanceTimer;
         PerformanceTimer& timer()
@@ -95,6 +99,200 @@ namespace StreamCompaction {
             }
         }
 
+        __global__ void kernBlockScanShared2(int* data, int* blockSum, int n) {
+            extern __shared__ int shared[];
+            extern __shared__ int last;
+
+            int idx = threadIdx.x + 1;
+            int globalIdx = blockDim.x * blockIdx.x + threadIdx.x;
+
+            if (globalIdx > n / 2) {
+                return;
+            }
+
+            int2* data2 = reinterpret_cast<int2*>(data);
+            int2 val = *(data2 + globalIdx);
+
+            shared[offsetAddr(idx - 1)] = val.x + val.y;
+
+            if (idx == blockDim.x) {
+                last = shared[offsetAddr(blockDim.x - 1)];
+            }
+            __syncthreads();
+#pragma unroll
+            for (int stride = 1, active = blockDim.x >> 1; stride < blockDim.x / 2; stride <<= 1, active >>= 1) {
+                if (idx <= active) {
+                    int idxPa = offsetAddr(idx * stride * 2 - 1);
+                    int idxCh = offsetAddr(idx * stride * 2 - 1 - stride);
+                    shared[idxPa] += shared[idxCh];
+                }
+                __syncthreads();
+            }
+
+            if (idx == 1) {
+                shared[offsetAddr(blockDim.x - 1)] = shared[offsetAddr(blockDim.x / 2 - 1)];
+                shared[offsetAddr(blockDim.x / 2 - 1)] = 0;
+            }
+            __syncthreads();
+#pragma unroll
+            for (int stride = blockDim.x >> 2, active = 2; stride >= 1; stride >>= 1, active <<= 1) {
+                if (idx <= active) {
+                    int idxPa = offsetAddr(idx * stride * 2 - 1);
+                    int idxCh = offsetAddr(idx * stride * 2 - 1 - stride);
+                    shared[idxPa] += shared[idxCh];
+                    shared[idxCh] = shared[idxPa] - shared[idxCh];
+                }
+                __syncthreads();
+            }
+
+            int sum = shared[offsetAddr(idx - 1)];
+
+            val.y = sum + val.x;
+            val.x = sum;
+
+            *(data2 + globalIdx) = val;
+
+            if (idx == 1) {
+                blockSum[blockIdx.x] = shared[offsetAddr(blockDim.x - 1)] + last;
+            }
+        }
+
+        __global__ void kernBlockScanShared4(int* data, int* blockSum, int n) {
+            extern __shared__ int shared[];
+            extern __shared__ int last;
+
+            int idx = threadIdx.x + 1;
+            int globalIdx = blockDim.x * blockIdx.x + threadIdx.x;
+
+            if (globalIdx > n / 4) {
+                return;
+            }
+
+            int4* data4 = reinterpret_cast<int4*>(data);
+            int4 val = *(data4 + globalIdx);
+
+            shared[offsetAddr(idx - 1)] = val.x + val.y + val.z + val.w;
+
+            if (idx == blockDim.x) {
+                last = shared[offsetAddr(blockDim.x - 1)];
+            }
+            __syncthreads();
+#pragma unroll
+            for (int stride = 1, active = blockDim.x >> 1; stride < blockDim.x / 2; stride <<= 1, active >>= 1) {
+                if (idx <= active) {
+                    int idxPa = offsetAddr(idx * stride * 2 - 1);
+                    int idxCh = offsetAddr(idx * stride * 2 - 1 - stride);
+                    shared[idxPa] += shared[idxCh];
+                }
+                __syncthreads();
+            }
+
+            if (idx == 1) {
+                shared[offsetAddr(blockDim.x - 1)] = shared[offsetAddr(blockDim.x / 2 - 1)];
+                shared[offsetAddr(blockDim.x / 2 - 1)] = 0;
+            }
+            __syncthreads();
+#pragma unroll
+            for (int stride = blockDim.x >> 2, active = 2; stride >= 1; stride >>= 1, active <<= 1) {
+                if (idx <= active) {
+                    int idxPa = offsetAddr(idx * stride * 2 - 1);
+                    int idxCh = offsetAddr(idx * stride * 2 - 1 - stride);
+                    shared[idxPa] += shared[idxCh];
+                    shared[idxCh] = shared[idxPa] - shared[idxCh];
+                }
+                __syncthreads();
+            }
+
+            int sum = shared[offsetAddr(idx - 1)];
+
+            val.w = sum + val.x + val.y + val.z;
+            val.z = sum + val.x + val.y;
+            val.y = sum + val.x;
+            val.x = sum;
+
+            *(data4 + globalIdx) = val;
+
+            if (idx == 1) {
+                blockSum[blockIdx.x] = shared[offsetAddr(blockDim.x - 1)] + last;
+            }
+        }
+
+        __global__ void kernWarpScan(int* data, int* blockSum, int n) {
+            int idx = threadIdx.x % WarpSize;
+            int globalIdx = blockDim.x * blockIdx.x + threadIdx.x;
+
+            if (globalIdx > n) {
+                return;
+            }
+            int val = data[globalIdx];
+
+#pragma unroll
+            for (int stride = 1; stride < WarpSize; stride <<= 1) {
+                val += __shfl_up_sync(0xffffffff, val, stride) * (idx >= stride);
+            }
+
+            if (idx == WarpSize - 1) {
+                blockSum[blockIdx.x] = val;
+            }
+            data[globalIdx] = __shfl_up_sync(0xffffffff, val, 1) * (idx != 0);
+        }
+
+        __global__ void kernWarpScan2(int* data, int* blockSum, int n) {
+            int idx = threadIdx.x % WarpSize;
+            int globalIdx = blockDim.x * blockIdx.x + threadIdx.x;
+
+            if (globalIdx > n / 2) {
+                return;
+            }
+            int2* data2 = reinterpret_cast<int2*>(data);
+            int2 val = *(data2 + globalIdx);
+            int sum = val.x + val.y;
+
+#pragma unroll
+            for (int stride = 1; stride < WarpSize; stride <<= 1) {
+                sum += __shfl_up_sync(0xffffffff, sum, stride) * (idx >= stride);
+            }
+            sum = __shfl_up_sync(0xffffffff, sum, 1) * (idx != 0);
+
+            if (idx == WarpSize - 1) {
+                blockSum[blockIdx.x] = sum;
+            }
+            val.y = sum + val.x;
+            val.x = sum;
+
+            *(data2 + globalIdx) = val;
+        }
+
+        __global__ void kernWarpScan4(int* data, int* blockSum, int n) {
+            int idx = threadIdx.x % WarpSize;
+            int globalIdx = blockDim.x * blockIdx.x + threadIdx.x;
+
+            if (globalIdx > n / 4) {
+                return;
+            }
+
+            int4* data4 = reinterpret_cast<int4*>(data);
+            int4 val = *(data4 + globalIdx);
+            int sum = val.x + val.y + val.z + val.w;
+
+#pragma unroll
+            for (int stride = 1; stride < WarpSize; stride <<= 1) {
+                sum += __shfl_up_sync(0xffffffff, sum, stride) * (idx >= stride);
+            }
+            sum = __shfl_up_sync(0xffffffff, sum, 1) * (idx != 0);
+
+            if (idx == WarpSize - 1) {
+                blockSum[blockIdx.x] = sum;
+            }
+
+            val.w = sum + val.x + val.y + val.z;
+            val.z = sum + val.x + val.y;
+            val.y = sum + val.x;
+            val.x = sum;
+
+            *(data4 + globalIdx) = val;
+        }
+
         __global__ void kernScannedBlockAdd(int* data, const int* blockSum, int n) {
             extern __shared__ int sum;
             int idx = blockDim.x * blockIdx.x + threadIdx.x;
@@ -135,6 +333,20 @@ namespace StreamCompaction {
                 throw std::runtime_error("devBlockScanInPlaceShared:: size not multiple of BlockSize");
             }
             kernBlockScanShared<<<size / blockSize, blockSize>>>(devData, devBlockSum, size);
+        }
+
+        void devBlockScanInPlaceShared2(int* devData, int* devBlockSum, int size, int blockSize) {
+            if ((size / 2) % blockSize != 0) {
+                throw std::runtime_error("devBlockScanInPlaceShared:: size not multiple of BlockSize");
+            }
+            kernBlockScanShared2<<<size / blockSize / 2, blockSize>>>(devData, devBlockSum, size);
+        }
+
+        void devBlockScanInPlaceShared4(int* devData, int* devBlockSum, int size, int blockSize) {
+            if ((size / 4) % blockSize != 0) {
+                throw std::runtime_error("devBlockScanInPlaceShared:: size not multiple of BlockSize");
+            }
+            kernBlockScanShared4<<<size / blockSize / 4, blockSize>>>(devData, devBlockSum, size);
         }
 
         void devScanInPlaceShared(int* devData, int size) {
@@ -197,7 +409,7 @@ namespace StreamCompaction {
                 return;
             }
 
-            DevSharedScanAuxBuffer<int> devBuf(n, SharedScanBlockSize);
+            DevSharedScanAuxBuffer<int> devBuf(n, blockSize);
             cudaMemcpy(devBuf.data(), in, n * sizeof(int), cudaMemcpyKind::cudaMemcpyHostToDevice);
 
             timer().startGpuTimer();
@@ -207,6 +419,62 @@ namespace StreamCompaction {
 
             for (int i = devBuf.numLayers() - 2; i > 0; i--) {
                 devScannedBlockAdd(devBuf[i - 1], devBuf[i], devBuf.sizeAt(i - 1), blockSize);
+            }
+            timer().endGpuTimer();
+
+            cudaMemcpy(out, devBuf.data(), n * sizeof(int), cudaMemcpyKind::cudaMemcpyDeviceToHost);
+            devBuf.destroy();
+        }
+
+        void scanShared2(int* out, const int* in, int n, int blockSize) {
+            // Just to keep the edge case correct
+           // If n <= blockSize, there's no need to perform a GPU scan
+            if (n <= blockSize) {
+                out[0] = 0;
+                for (int i = 1; i < n; i++) {
+                    out[i] = out[i - 1] + in[i - 1];
+                }
+                return;
+            }
+
+            DevSharedScanAuxBuffer<int> devBuf(n, blockSize * 2);
+            cudaMemcpy(devBuf.data(), in, n * sizeof(int), cudaMemcpyKind::cudaMemcpyHostToDevice);
+
+            timer().startGpuTimer();
+            for (int i = 0; i + 1 < devBuf.numLayers(); i++) {
+                devBlockScanInPlaceShared2(devBuf[i], devBuf[i + 1], devBuf.sizeAt(i), blockSize);
+            }
+
+            for (int i = devBuf.numLayers() - 2; i > 0; i--) {
+                devScannedBlockAdd(devBuf[i - 1], devBuf[i], devBuf.sizeAt(i - 1), blockSize * 2);
+            }
+            timer().endGpuTimer();
+
+            cudaMemcpy(out, devBuf.data(), n * sizeof(int), cudaMemcpyKind::cudaMemcpyDeviceToHost);
+            devBuf.destroy();
+        }
+
+        void scanShared4(int* out, const int* in, int n, int blockSize) {
+            // Just to keep the edge case correct
+           // If n <= blockSize, there's no need to perform a GPU scan
+            if (n <= blockSize) {
+                out[0] = 0;
+                for (int i = 1; i < n; i++) {
+                    out[i] = out[i - 1] + in[i - 1];
+                }
+                return;
+            }
+
+            DevSharedScanAuxBuffer<int> devBuf(n, blockSize * 4);
+            cudaMemcpy(devBuf.data(), in, n * sizeof(int), cudaMemcpyKind::cudaMemcpyHostToDevice);
+
+            timer().startGpuTimer();
+            for (int i = 0; i + 1 < devBuf.numLayers(); i++) {
+                devBlockScanInPlaceShared4(devBuf[i], devBuf[i + 1], devBuf.sizeAt(i), blockSize);
+            }
+
+            for (int i = devBuf.numLayers() - 2; i > 0; i--) {
+                devScannedBlockAdd(devBuf[i - 1], devBuf[i], devBuf.sizeAt(i - 1), blockSize * 4);
             }
             timer().endGpuTimer();
 
@@ -225,12 +493,185 @@ namespace StreamCompaction {
                 return;
             }
 
-            DevSharedScanAuxBuffer<int> devBuf(n, SharedScanBlockSize);
+            DevSharedScanAuxBuffer<int> devBuf(n, blockSize);
             cudaMemcpy(devBuf.data(), in, n * sizeof(int), cudaMemcpyKind::cudaMemcpyHostToDevice);
 
             timer().startGpuTimer();
-
+#if SCAN_UP_ONLY
             devBlockScanInPlaceShared(devBuf[0], devBuf[1], devBuf.sizeAt(0), blockSize);
+#else
+            for (int i = 0; i + 1 < devBuf.numLayers(); i++) {
+                devBlockScanInPlaceShared(devBuf[i], devBuf[i + 1], devBuf.sizeAt(i), blockSize);
+            }
+
+            for (int i = devBuf.numLayers() - 2; i > 0; i--) {
+                devScannedBlockAdd(devBuf[i - 1], devBuf[i], devBuf.sizeAt(i - 1), blockSize);
+            }
+#endif
+            timer().endGpuTimer();
+
+            cudaMemcpy(out, devBuf.data(), n * sizeof(int), cudaMemcpyKind::cudaMemcpyDeviceToHost);
+            devBuf.destroy();
+        }
+
+        void scanBlockTest2(int* out, const int* in, int n, int blockSize) {
+            // Just to keep the edge case correct
+            // If n <= blockSize, there's no need to perform a GPU scan
+            if (n <= blockSize) {
+                out[0] = 0;
+                for (int i = 1; i < n; i++) {
+                    out[i] = out[i - 1] + in[i - 1];
+                }
+                return;
+            }
+
+            DevSharedScanAuxBuffer<int> devBuf(n, blockSize * 2);
+            cudaMemcpy(devBuf.data(), in, n * sizeof(int), cudaMemcpyKind::cudaMemcpyHostToDevice);
+
+            timer().startGpuTimer();
+#if SCAN_UP_ONLY
+            devBlockScanInPlaceShared2(devBuf[0], devBuf[1], devBuf.sizeAt(0), blockSize);
+#else
+            for (int i = 0; i + 1 < devBuf.numLayers(); i++) {
+                devBlockScanInPlaceShared2(devBuf[i], devBuf[i + 1], devBuf.sizeAt(i), blockSize);
+            }
+
+            for (int i = devBuf.numLayers() - 2; i > 0; i--) {
+                devScannedBlockAdd(devBuf[i - 1], devBuf[i], devBuf.sizeAt(i - 1), blockSize * 2);
+            }
+#endif
+            timer().endGpuTimer();
+
+            cudaMemcpy(out, devBuf.data(), n * sizeof(int), cudaMemcpyKind::cudaMemcpyDeviceToHost);
+            devBuf.destroy();
+        }
+
+        void scanBlockTest4(int* out, const int* in, int n, int blockSize) {
+            // Just to keep the edge case correct
+            // If n <= blockSize, there's no need to perform a GPU scan
+            if (n <= blockSize) {
+                out[0] = 0;
+                for (int i = 1; i < n; i++) {
+                    out[i] = out[i - 1] + in[i - 1];
+                }
+                return;
+            }
+
+            DevSharedScanAuxBuffer<int> devBuf(n, blockSize * 4);
+            cudaMemcpy(devBuf.data(), in, n * sizeof(int), cudaMemcpyKind::cudaMemcpyHostToDevice);
+
+            timer().startGpuTimer();
+#if SCAN_UP_ONLY
+            devBlockScanInPlaceShared4(devBuf[0], devBuf[1], devBuf.sizeAt(0), blockSize);
+#else
+            for (int i = 0; i + 1 < devBuf.numLayers(); i++) {
+                devBlockScanInPlaceShared4(devBuf[i], devBuf[i + 1], devBuf.sizeAt(i), blockSize);
+            }
+
+            for (int i = devBuf.numLayers() - 2; i > 0; i--) {
+                devScannedBlockAdd(devBuf[i - 1], devBuf[i], devBuf.sizeAt(i - 1), blockSize * 4);
+            }
+#endif
+            timer().endGpuTimer();
+
+            cudaMemcpy(out, devBuf.data(), n * sizeof(int), cudaMemcpyKind::cudaMemcpyDeviceToHost);
+            devBuf.destroy();
+        }
+
+        void scanWarpTest(int* out, const int* in, int n, int blockSize) {
+            // Just to keep the edge case correct
+            // If n <= blockSize, there's no need to perform a GPU scan
+            if (n <= blockSize) {
+                out[0] = 0;
+                for (int i = 1; i < n; i++) {
+                    out[i] = out[i - 1] + in[i - 1];
+                }
+                return;
+            }
+
+            DevSharedScanAuxBuffer<int> devBuf(n, 32);
+            cudaMemcpy(devBuf.data(), in, n * sizeof(int), cudaMemcpyKind::cudaMemcpyHostToDevice);
+
+            timer().startGpuTimer();
+#if SCAN_UP_ONLY
+            kernWarpScan<<<n / blockSize, blockSize>>>(devBuf[0], devBuf[1], n);
+#else
+            for (int i = 0; i + 1 < devBuf.numLayers(); i++) {
+                int size = devBuf.sizeAt(i);
+                kernWarpScan<<<size / blockSize, blockSize>>>(devBuf[i], devBuf[i + 1], size);
+            }
+
+            for (int i = devBuf.numLayers() - 2; i > 0; i--) {
+                devScannedBlockAdd(devBuf[i - 1], devBuf[i], devBuf.sizeAt(i - 1), 32);
+            }
+#endif
+            timer().endGpuTimer();
+
+            cudaMemcpy(out, devBuf.data(), n * sizeof(int), cudaMemcpyKind::cudaMemcpyDeviceToHost);
+            devBuf.destroy();
+        }
+
+        void scanWarpTest2(int* out, const int* in, int n, int blockSize) {
+            // Just to keep the edge case correct
+            // If n <= blockSize, there's no need to perform a GPU scan
+            if (n <= blockSize) {
+                out[0] = 0;
+                for (int i = 1; i < n; i++) {
+                    out[i] = out[i - 1] + in[i - 1];
+                }
+                return;
+            }
+
+            DevSharedScanAuxBuffer<int> devBuf(n, 64);
+            cudaMemcpy(devBuf.data(), in, n * sizeof(int), cudaMemcpyKind::cudaMemcpyHostToDevice);
+
+            timer().startGpuTimer();
+#if SCAN_UP_ONLY
+            kernWarpScan2<<<n / blockSize / 2, blockSize>>>(devBuf[0], devBuf[1], n);
+#else
+            for (int i = 0; i + 1 < devBuf.numLayers(); i++) {
+                int size = devBuf.sizeAt(i);
+                kernWarpScan2<<<size / blockSize / 2, blockSize>>>(devBuf[i], devBuf[i + 1], size);
+            }
+
+            for (int i = devBuf.numLayers() - 2; i > 0; i--) {
+                devScannedBlockAdd(devBuf[i - 1], devBuf[i], devBuf.sizeAt(i - 1), 64);
+            }
+#endif
+            timer().endGpuTimer();
+
+            cudaMemcpy(out, devBuf.data(), n * sizeof(int), cudaMemcpyKind::cudaMemcpyDeviceToHost);
+            devBuf.destroy();
+        }
+
+        void scanWarpTest4(int* out, const int* in, int n, int blockSize) {
+            // Just to keep the edge case correct
+            // If n <= blockSize, there's no need to perform a GPU scan
+            if (n <= blockSize) {
+                out[0] = 0;
+                for (int i = 1; i < n; i++) {
+                    out[i] = out[i - 1] + in[i - 1];
+                }
+                return;
+            }
+
+            DevSharedScanAuxBuffer<int> devBuf(n, 128);
+            cudaMemcpy(devBuf.data(), in, n * sizeof(int), cudaMemcpyKind::cudaMemcpyHostToDevice);
+
+            timer().startGpuTimer();
+#if SCAN_UP_ONLY
+            kernWarpScan4<<<n / blockSize / 4, blockSize>>>(devBuf[0], devBuf[1], n);
+#else
+            for (int i = 0; i + 1 < devBuf.numLayers(); i++) {
+                int size = devBuf.sizeAt(i);
+                kernWarpScan4<<<size / blockSize / 4, blockSize>>>(devBuf[i], devBuf[i + 1], size);
+            }
+
+            for (int i = devBuf.numLayers() - 2; i > 0; i--) {
+                devScannedBlockAdd(devBuf[i - 1], devBuf[i], devBuf.sizeAt(i - 1), 128);
+            }
+#endif
+            timer().endGpuTimer();
 
             cudaMemcpy(out, devBuf.data(), n * sizeof(int), cudaMemcpyKind::cudaMemcpyDeviceToHost);
             devBuf.destroy();
