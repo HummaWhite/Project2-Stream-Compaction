@@ -765,5 +765,50 @@ namespace StreamCompaction {
 
             return compactedSize;
         }
+
+        int compactShared2(int* out, const int* in, int n)
+        {
+            int* devIn, * devOut;
+            cudaMalloc(&devIn, n * sizeof(int));
+            cudaMalloc(&devOut, n * sizeof(int));
+            cudaMemcpy(devIn, in, n * sizeof(int), cudaMemcpyKind::cudaMemcpyHostToDevice);
+
+            int size = ceilPow2(n);
+            int* devIndices;
+            cudaMalloc(&devIndices, size * sizeof(int));
+
+            DevSharedScanAuxBuffer<int> devBuf(n, SharedScanBlockSize);
+
+            timer().startGpuTimer();
+
+            int blockSize = Common::getDynamicBlockSizeEXT(n);
+            int blockNum = ceilDiv(n, blockSize);
+            Common::kernMapToBoolean<<<blockNum, blockSize>>>(n, devIndices, devIn);
+            cudaMemcpy(devBuf.data(), devIndices, n * sizeof(int), cudaMemcpyKind::cudaMemcpyDeviceToDevice);
+
+            for (int i = 0; i + 1 < devBuf.numLayers(); i++) {
+                devBlockScanInPlaceShared(devBuf[i], devBuf[i + 1], devBuf.sizeAt(i), SharedScanBlockSize);
+            }
+            for (int i = devBuf.numLayers() - 2; i > 0; i--) {
+                devScannedBlockAdd(devBuf[i - 1], devBuf[i], devBuf.sizeAt(i - 1), SharedScanBlockSize * 2);
+            }
+
+            cudaMemcpy(devIndices, devBuf.data(), n * sizeof(int), cudaMemcpyKind::cudaMemcpyDeviceToDevice);
+            Common::kernScatter<<<blockNum, blockSize>>>(n, devOut, devIn, devIn, devIndices);
+
+            timer().endGpuTimer();
+
+            int compactedSize;
+            cudaMemcpy(&compactedSize, devIndices + n - 1, sizeof(int), cudaMemcpyKind::cudaMemcpyDeviceToHost);
+            compactedSize += (in[n - 1] != 0);
+
+            cudaMemcpy(out, devOut, compactedSize * sizeof(int), cudaMemcpyKind::cudaMemcpyDeviceToHost);
+            cudaFree(devIndices);
+            cudaFree(devIn);
+            cudaFree(devOut);
+            devBuf.destroy();
+
+            return compactedSize;
+        }
     }
 }

@@ -4,6 +4,7 @@
 #include <thrust/host_vector.h>
 #include <thrust/scan.h>
 #include <thrust/remove.h>
+#include <thrust/sort.h>
 #include "common.h"
 #include "thrust.h"
 
@@ -35,6 +36,34 @@ namespace StreamCompaction {
             int size = last - devOut.begin();
             thrust::host_vector<int> out = devOut;
             memcpy(odata, out.data(), size * sizeof(int));
+        }
+
+        void sort32u(uint32_t* out, uint32_t* in, uint32_t n) {
+            thrust::host_vector<uint32_t> array(in, in + n);
+            thrust::device_vector<uint32_t> devArray = array;
+
+            timer().startGpuTimer();
+           
+            thrust::sort(devArray.begin(), devArray.end());
+
+            timer().endGpuTimer();
+
+            array = devArray;
+            memcpy(out, array.data(), n * sizeof(uint32_t));
+        }
+
+        void stableSort32u(uint32_t* out, uint32_t* in, uint32_t n) {
+            thrust::host_vector<uint32_t> array(in, in + n);
+            thrust::device_vector<uint32_t> devArray = array;
+
+            timer().startGpuTimer();
+
+            thrust::stable_sort(devArray.begin(), devArray.end());
+
+            timer().endGpuTimer();
+
+            array = devArray;
+            memcpy(out, array.data(), n * sizeof(uint32_t));
         }
     }
 }

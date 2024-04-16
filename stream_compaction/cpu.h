@@ -13,5 +13,7 @@ namespace StreamCompaction {
         int compactWithScan(int n, int *odata, const int *idata);
 
         void sort(int* out, const int* in, int n);
+
+        void bitonicSort32u(uint32_t* out, uint32_t* in, uint32_t n);
     }
 }

@@ -26,5 +26,7 @@ namespace StreamCompaction {
 
         int compact(int* out, const int* in, int n);
         int compactShared(int* out, const int* in, int n);
+        int compactShared2(int* out, const int* in, int n);
+        int compactShared4(int* out, const int* in, int n);
     }
 }

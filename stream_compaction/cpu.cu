@@ -148,5 +148,28 @@ namespace StreamCompaction {
             std::sort(out, out + n);
             timer().endCpuTimer();
         }
+
+        void bitonicSort32u(uint32_t* out, uint32_t* in, uint32_t n) {
+            memcpy(out, in, n * sizeof(uint32_t));
+
+            for (uint32_t stride = 2, level = 1; stride <= n; stride <<= 1, level++) {
+                for (uint32_t subStride = stride, subLevel = level; subStride > 1; subStride >>= 1, subLevel--) {
+                    for (uint32_t i = 0; i < n / 2; i++) {
+                        uint32_t idx = i << 1;
+
+                        uint32_t baseIdx = (idx >> subLevel << subLevel) + ((idx & (subStride - 1)) >> 1);
+                        uint32_t dir = (idx >> level) & 1;
+                        uint32_t mappedIdx = baseIdx ^ ((stride - 1) * dir);
+                        uint32_t compareIdx = mappedIdx ^ (subStride >> 1);
+
+                        uint32_t a = out[mappedIdx];
+                        uint32_t b = out[compareIdx];
+
+                        out[mappedIdx] = std::min(a, b);
+                        out[compareIdx] = std::max(a, b);
+                    }
+                }
+            }
+        }
     }
 }
